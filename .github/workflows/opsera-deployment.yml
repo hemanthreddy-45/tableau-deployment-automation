@@ -33,10 +33,9 @@ jobs:
       - name: Trigger Opsera Pipeline
         id: trigger
         env:
-          API_URL: ${{ secrets.OPESRA_API_URL }}
-          API_TOKEN: ${{ secrets.OPESRA_API_TOKEN }}
-          PIPELINE_ID: ${{ secrets.OPESRA_PIPELINE_ID }}
-          STEP_ID: ${{ secrets.OPESRA_STEP_ID }}
+          API_URL: ${{ secrets.OPSERA_API_URL }}
+          API_TOKEN: ${{ secrets.OPSERA_API_URL }}
+          PIPELINE_ID: ${{ secrets.OPSERA_API_URL }}
           COMMIT_SHA: ${{ steps.extract_sha.outputs.commit_sha }}
         run: |
           echo "Triggering Opsera pipeline for commit ${COMMIT_SHA}"
@@ -71,8 +70,8 @@ jobs:
       # Step 4: Poll Opsera pipeline for status
       - name: Poll Opsera Pipeline Status
         env:
-          API_TOKEN: ${{ secrets.OPESRA_API_TOKEN }}
-          STATUS_URL: ${{ secrets.OPESRA_STATUS_URL }}
+          API_TOKEN: ${{ secrets.OPSERA_API_URL_API_TOKEN }}
+          STATUS_URL: ${{ secrets.OPSERA_API_URL_STATUS_URL }}
           EXEC_ID: ${{ steps.trigger.outputs.execution_id }}
         run: |
           echo "Polling Opsera pipeline status for execution ID: ${EXEC_ID}"
@@ -101,3 +100,4 @@ jobs:
 
           echo "Pipeline did not complete in expected time"
           exit 1
+
