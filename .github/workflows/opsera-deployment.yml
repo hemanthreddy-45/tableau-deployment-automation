@@ -43,7 +43,6 @@ jobs:
           # Construct request body with commit SHA in notificationMessage
           REQUEST_BODY=$(jq -n \
             --arg p "$PIPELINE_ID" \
-            --arg s "$STEP_ID" \
             --arg m "Deploy commit: $COMMIT_SHA" \
             '{pipelineId: $p, stepId: $s, notificationMessage: $m}')
 
@@ -52,7 +51,7 @@ jobs:
             -H "Authorization: Bearer ${API_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$REQUEST_BODY" \
-            "$API_URL")
+            "$OPSERA_API_URL")
 
           echo "API Response: $RESPONSE"
 
@@ -100,4 +99,5 @@ jobs:
 
           echo "Pipeline did not complete in expected time"
           exit 1
+
 
