@@ -1,0 +1,86 @@
+name: Deploy Commit to Opsera Pipeline
+
+on:
+  push:
+    branches:
+      - deployment-queue
+
+concurrency:
+  group: opsera-deployment-queue
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the exact commit that triggered the workflow
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Extract Commit SHA
+        id: extract_sha
+        run: |
+          echo "commit_sha=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+          echo "Processing commit: ${GITHUB_SHA}"
+
+      - name: Trigger Opsera Pipeline
+        id: trigger_pipeline
+        env:
+          OPESRA_API_URL: ${{ secrets.OPESRA_API_URL }}
+          OPESRA_API_TOKEN: ${{ secrets.OPESRA_API_TOKEN }}
+          COMMIT_SHA: ${{ steps.extract_sha.outputs.commit_sha }}
+        run: |
+          echo "Triggering Opsera pipeline for commit ${COMMIT_SHA}"
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer ${OPESRA_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"commitSha\": \"${COMMIT_SHA}\"}" \
+            "${OPESRA_API_URL}")
+
+          echo "Opsera API Response: $RESPONSE"
+
+          EXEC_ID=$(echo "$RESPONSE" | jq -r '.executionId')
+
+          if [ "$EXEC_ID" == "null" ] || [ -z "$EXEC_ID" ]; then
+            echo "Error: Could not trigger Opsera pipeline"
+            exit 1
+          fi
+
+          echo "execution_id=$EXEC_ID" >> $GITHUB_OUTPUT
+          echo "Successfully triggered Opsera pipeline. Execution ID: $EXEC_ID"
+
+      - name: Poll Opsera Pipeline Status
+        env:
+          STATUS_URL: ${{ secrets.OPESRA_STATUS_URL }}
+          OPESRA_API_TOKEN: ${{ secrets.OPESRA_API_TOKEN }}
+          EXECUTION_ID: ${{ steps.trigger_pipeline.outputs.execution_id }}
+        run: |
+          echo "Monitoring Opsera pipeline execution..."
+
+          for attempt in {1..60}; do
+            RESPONSE=$(curl -s -X GET \
+              -H "Authorization: Bearer ${OPESRA_API_TOKEN}" \
+              "${STATUS_URL}/${EXECUTION_ID}")
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+            echo "Pipeline status: $STATUS"
+
+            if [ "$STATUS" == "completed" ]; then
+              echo "Pipeline completed successfully."
+              exit 0
+            fi
+
+            if [ "$STATUS" == "failed" ]; then
+              echo "Pipeline failed."
+              exit 1
+            fi
+
+            echo "Waiting 30 seconds before checking again..."
+            sleep 30
+          done
+
+          echo "Pipeline did not complete in time."
+          exit 1
