@@ -1,27 +1,103 @@
-name: Minimal Opsera Trigger
+name: Deploy Commit to Opsera Pipeline
 
+# Trigger on push to any branch you want (can be deployment-queue or main)
 on:
   push:
     branches:
       - deployment-queue
+
+# Ensure sequential execution
+concurrency:
+  group: opsera-deployment-queue
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Checkout the repository at the exact commit
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          ref: ${{ github.sha }}
 
+      # Step 2: Extract the commit SHA for reference
+      - name: Extract commit SHA
+        id: extract_sha
+        run: |
+          echo "commit_sha=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+          echo "Processing commit: ${GITHUB_SHA}"
+
+      # Step 3: Trigger Opsera pipeline with commit SHA
       - name: Trigger Opsera Pipeline
+        id: trigger
         env:
           API_URL: ${{ secrets.OPESRA_API_URL }}
           API_TOKEN: ${{ secrets.OPESRA_API_TOKEN }}
           PIPELINE_ID: ${{ secrets.OPESRA_PIPELINE_ID }}
           STEP_ID: ${{ secrets.OPESRA_STEP_ID }}
+          COMMIT_SHA: ${{ steps.extract_sha.outputs.commit_sha }}
         run: |
-          curl -X POST \
+          echo "Triggering Opsera pipeline for commit ${COMMIT_SHA}"
+
+          # Construct request body with commit SHA in notificationMessage
+          REQUEST_BODY=$(jq -n \
+            --arg p "$PIPELINE_ID" \
+            --arg s "$STEP_ID" \
+            --arg m "Deploy commit: $COMMIT_SHA" \
+            '{pipelineId: $p, stepId: $s, notificationMessage: $m}')
+
+          # Call Opsera API
+          RESPONSE=$(curl -s -X POST \
             -H "Authorization: Bearer ${API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"pipelineId":"'"$PIPELINE_ID"'","stepId":"'"$STEP_ID"'","notificationMessage":"Test commit"}' \
-            "$API_URL"
+            -d "$REQUEST_BODY" \
+            "$API_URL")
+
+          echo "API Response: $RESPONSE"
+
+          # Extract execution ID for polling status
+          EXEC_ID=$(echo "$RESPONSE" | jq -r '.executionId')
+
+          if [[ -z "$EXEC_ID" || "$EXEC_ID" == "null" ]]; then
+            echo "Failed to trigger pipeline"
+            exit 1
+          fi
+
+          echo "execution_id=$EXEC_ID" >> $GITHUB_OUTPUT
+          echo "Pipeline triggered successfully: $EXEC_ID"
+
+      # Step 4: Poll Opsera pipeline for status
+      - name: Poll Opsera Pipeline Status
+        env:
+          API_TOKEN: ${{ secrets.OPESRA_API_TOKEN }}
+          STATUS_URL: ${{ secrets.OPESRA_STATUS_URL }}
+          EXEC_ID: ${{ steps.trigger.outputs.execution_id }}
+        run: |
+          echo "Polling Opsera pipeline status for execution ID: ${EXEC_ID}"
+
+          for i in {1..60}; do
+            RESPONSE=$(curl -s -X GET \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              "${STATUS_URL}/${EXEC_ID}")
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+
+            echo "Status: $STATUS"
+
+            if [[ "$STATUS" == "completed" ]]; then
+              echo "Pipeline completed successfully"
+              exit 0
+            fi
+
+            if [[ "$STATUS" == "failed" ]]; then
+              echo "Pipeline failed"
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+          echo "Pipeline did not complete in expected time"
+          exit 1
