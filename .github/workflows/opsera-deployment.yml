@@ -44,7 +44,7 @@ jobs:
           REQUEST_BODY=$(jq -n \
             --arg p "$PIPELINE_ID" \
             --arg m "Deploy commit: $COMMIT_SHA" \
-            '{pipelineId: $p, stepId: $s, notificationMessage: $m}')
+            '{pipelineId: $p, notificationMessage: $m}')
 
           # Call Opsera API
           RESPONSE=$(curl -s -X POST \
@@ -99,5 +99,6 @@ jobs:
 
           echo "Pipeline did not complete in expected time"
           exit 1
+
 
 
