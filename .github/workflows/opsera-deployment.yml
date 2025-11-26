@@ -1,0 +1,94 @@
+name: Deploy Commit to Opsera Pipeline
+
+on:
+  push:
+    branches:
+      - deployment-queue
+
+concurrency:
+  group: opsera-deployment-queue
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the exact commit
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Extract Commit SHA
+        id: extract_sha
+        run: |
+          echo "commit_sha=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+          echo "Processing commit: ${GITHUB_SHA}"
+
+      - name: Trigger Opsera Pipeline
+        id: trigger
+        env:
+          API_URL: ${{ secrets.OPSERA_API_URL }}
+          API_TOKEN: ${{ secrets.OPSERA_API_TOKEN }}
+          PIPELINE_ID: ${{ secrets.OPSERA_PIPELINE_ID }}
+          COMMIT_SHA: ${{ steps.extract_sha.outputs.commit_sha }}
+        run: |
+          echo "Triggering Opsera pipeline for commit ${COMMIT_SHA}"
+
+          REQUEST_BODY=$(jq -n \
+            --arg p "$PIPELINE_ID" \
+            --arg s "$STEP_ID" \
+            --arg m "Deploy commit: $COMMIT_SHA" \
+            '{pipelineId: $p, stepId: $s, notificationMessage: $m}')
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$REQUEST_BODY" \
+            "$API_URL")
+
+          echo "Response: $RESPONSE"
+
+          EXEC_ID=$(echo "$RESPONSE" | jq -r '.executionId')
+
+          if [[ -z "$EXEC_ID" || "$EXEC_ID" == "null" ]]; then
+            echo "Could not trigger pipeline"
+            exit 1
+          fi
+
+          echo "execution_id=$EXEC_ID" >> $GITHUB_OUTPUT
+          echo "Pipeline triggered: $EXEC_ID"
+
+      - name: Poll Opsera Pipeline Status
+        env:
+          API_TOKEN: ${{ secrets.OPSERA_API_TOKEN }}
+          STATUS_URL: ${{ secrets.OPSERA_STATUS_URL }}
+          EXEC_ID: ${{ steps.trigger.outputs.execution_id }}
+        run: |
+          echo "Checking status for execution ID ${EXEC_ID}"
+
+          for i in {1..60}; do
+            RESPONSE=$(curl -s -X GET \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              "${STATUS_URL}/${EXEC_ID}")
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+
+            echo "Status: $STATUS"
+
+            if [[ "$STATUS" == "completed" ]]; then
+              echo "Pipeline completed successfully"
+              exit 0
+            fi
+
+            if [[ "$STATUS" == "failed" ]]; then
+              echo "Pipeline failed"
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+          echo "Pipeline did not complete in time"
+          exit 1
+
